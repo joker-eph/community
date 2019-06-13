@@ -25,11 +25,11 @@ don’t have special contract with the executor).
 
 One intent of this design is that TensorFlow 2.x features can choose to target
 just the `tf` dialect, allowing us to phase out the `tf_executor` dialect in
-subsequent TensorFlow releases. The combination of the dialect allow to
+subsequent TensorFlow releases. The combination of the dialects allow to
 represent arbitrary existing TensorFlow graphs.
 
 It is out-of-scope of this document to define the exact strategy and
-representation for “device partitioning”. Specific targets aren't expect to
+representation for “device partitioning”. Specific targets aren't expected to
 manipulate this dialect directly, instead our plan is to provide a generic
 infrastructure for replacing the TF/XLA bridge with a more flexible and reusable
 system across targets. Another topic out-of-scope of this proposal is the
@@ -44,7 +44,7 @@ have a specific handling by the executor. These operations don’t operate on de
 values, don’t have control dependencies, and execute conceptually in program
 order. The form used in this dialect aligns with the direction taken by
 TensorFlow 2.0 with tf.function and autograph, as well as with the needs of
-other frontend. This should ease the development of analyses and
+other frontends. This should ease the development of analyses and
 transformations: optimizations operate on a simpler semantics and local graph
 transformations can be validated in a local scope. Simple patterns like folding
 `x-x` into a constant 0 do not need to update any control dependencies. It
@@ -66,17 +66,17 @@ Below is an example of a function operating on the TensorFlow dialect:
 /// The body is a regular CFG.
 func some_function(%input : tensor<*xf32>) -> tensor<*xf32> {
   // TensorFlow operations are not variadic: this `tf.add` operation always takes
-  // two inputs and returning a single output. This simplifies pattern-matching,
+  // two inputs and returns a single output. This simplifies pattern-matching,
   // verification and rewriting.
   %added = tf.Add %input, %input : tensor<*xf32>
   // Operations have sequential execution semantics in a basic block, there are no
   // control dependencies.  The compiler can reorder operations according to
-  // the as-if rule ( https://en.wikipedia.org/wiki/As-if_rule ).
+  // the as-if rule.
   %three = constant splat<tensor<f32>, 3.0>
   %mul = tf.Mul %input, %three : (tensor<*xf32>, tensor<f32>) -> tensor<*xf32>
 
   // Only control flow v2 is supported in TF dialect.
-  // The tf.If operation takes three functions that accepts the same
+  // The tf.If operation takes three functions that accept the same
   // arguments: the condition returns a bool and the two branches must return the
   // same type, which is also the return of the tf.If.
   %value = "tf.If”(%added, %mul)
@@ -100,22 +100,19 @@ deadness propagation, concurrent semantics, and control dependencies. The
     NextIteration operation.
 
 The `tf_executor` dialect is closed as there are only 8 TensorFlow ops with
-specific graph executor behavior as 4 additional ops to represent islands of
+specific graph executor behavior and 4 additional ops to represent islands of
 predictability and does not accept unregistered operations.
 
-This dialect models the TensorFlow executor semantics, as such a large part of
-the defined operations are mirroring the
-[TensorFlow Control Flow Ops](https://www.tensorflow.org/api_docs/cc/group/control-flow-ops)
-and
-[implement Control Flow In TensorFlow](http://download.tensorflow.org/paper/white_paper_tf_control_flow_implementation_2017_11_1.pdf).
-Also, almost all the operations accepts a variadic number of control tokens and
-return an extra control token as output. Except for `tf_executor.Merge` and
-`tf_executor.ControlTrigger`, operations are propagating deadness: if any of the
-input (control and non-control) is dead, all the outputs (control and
-non-control) are dead as well. For `tf_executor.Merge`, the output is dead only
-when either an input control token is dead or all of the regular inputs are
-dead. For `tf_executor.ControlTrigger`, a live control output is always produced
-even when some control inputs are dead.
+This dialect models the TensorFlow executor semantics; as such, a large part of
+the defined operations are mirroring the TensorFlow Control Flow Ops and
+implement Control Flow In TensorFlow. Also, almost all the operations accept a
+variadic number of control tokens and return an extra control token as output.
+Except for `tf_executor.Merge` and `tf_executor.ControlTrigger`, operations are
+propagating deadness: if any of the input (control and non-control) is dead, all
+the outputs (control and non-control) are dead as well. For `tf_executor.Merge`,
+the output is dead only when either an input control token is dead or all of the
+regular inputs are dead. For `tf_executor.ControlTrigger`, a live control output
+is always produced even when some control inputs are dead.
 
 ### `tf_executor.graph` Operation
 
@@ -152,7 +149,7 @@ operation. The behavior is undefined if any of the operands of the
 
 ```mlir {.mlir}
 %fetches = tf_executor.graph : tensor<*xf32> {
-  // Operations in the current block execute when their input are ready,
+  // Operations in the current block execute when their inputs are ready,
   // possibly concurrently.
   // Only operations in the tf_executor dialect are expected here.
   // Ops can return multiple outputs and a control token for control
@@ -184,7 +181,8 @@ Within an island, execution semantics follow standard sequential behavior
 consistent with the direction of TensorFlow 2.0 and autograph, and desirable for
 compiler analyses and transformations. Values in an island can’t be dead. Other
 nested `tf_executor.graph` operations can be present in the region to re-enable
-the TensorFlow executor for a subsection of the code.
+the TensorFlow executor behavior for a subsection of the code. This is important
+for the following reasons:
 
 *   Initially the functional control flow operations are calling functions
     involving nested graphs, if `tf_executor.graph` weren’t allowed in an
@@ -255,7 +253,7 @@ The TensorFlow
 [`NextIteration`](https://www.tensorflow.org/api_docs/cc/class/tensorflow/ops/next-iteration)
 op is modeled using these two paired operations. Since _NextIteration_ is
 intended for modeling the loop back-edges, breaking it in two different
-operations allow to keep a structural DAG.`tf_executor.NextIteration.Source`does
+operations allows to keep a structural DAG.`tf_executor.NextIteration.Source`does
 not take any operand and produces two results: one regular value corresponding
 to the TensorFlow graph, and a second value of type`tf_executor.token`. This
 token is consumed by the paired`tf_executor.NextIteration.Sink`Operation
@@ -270,7 +268,7 @@ though there is no data dependency between them.
 ### `tf_executor.LoopCond` Operation
 
 [`tf_executor.LoopCond`](https://www.tensorflow.org/api_docs/cc/class/tensorflow/ops/loop-cond):
-forward its boolean input to its output,
+forwards its boolean input to its output,
 [it acts as`pivot` for marking the loop termination condition](https://github.com/tensorflow/tensorflow/blob/master/tensorflow/core/kernels/control_flow_ops.h#L115-L118).
 
 ### `tf_executor.Enter` Operation
